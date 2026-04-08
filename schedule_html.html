@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ultimate Schedule App</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js"></script>
+    
+    <style>
+        /* --- 1. CSS変数 (テーマ管理) --- */
+        :root {
+            --bg-color: #f0f2f5;
+            --container-bg: #ffffff;
+            --text-color: #333333;
+            --input-bg: #ffffff;
+            --input-border: #dddddd;
+            --accent-color: #007bff;
+        }
+
+        [data-theme="dark"] {
+            --bg-color: #1a1a1a;
+            --container-bg: #2d2d2d;
+            --text-color: #e0e0e0;
+            --input-bg: #3d3d3d;
+            --input-border: #555555;
+        }
+
+        /* --- 2. 基本レイアウト --- */
+        body {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+            transition: all 0.3s ease;
+        }
+
+        .header-controls {
+            max-width: 900px;
+            margin: 0 auto 15px auto;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        #calendar-search {
+            flex-grow: 1;
+            padding: 10px;
+            border-radius: 6px;
+            border: 1px solid var(--input-border);
+            background: var(--input-bg);
+            color: var(--text-color);
+        }
+
+        .btn {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: opacity 0.2s;
+        }
+
+        .btn:hover { opacity: 0.8; }
+        .btn-csv { background: #28a745; color: white; }
+        .btn-theme { background: #555; color: white; }
+
+        #calendar {
+            max-width: 900px;
+            margin: 0 auto;
+            background: var(--container-bg);
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+
+        /* --- 3. モーダル --- */
+        .modal {
+            display: none;
+            position: fixed; z-index: 1000; left: 0; top: 0;
+            width: 100%; height: 100%; background: rgba(0,0,0,0.6);
+            align-items: center; justify-content: center;
+        }
+
+        .modal-content {
+            background: var(--container-bg);
+            color: var(--text-color);
+            padding: 25px; border-radius: 12px;
+            width: 90%; max-width: 400px;
+            display: flex; flex-direction: column; gap: 12px;
+        }
+
+        .modal-content input, .modal-content select, .modal-content textarea {
+            padding: 10px; border-radius: 6px; border: 1px solid var(--input-border);
+            background: var(--input-bg); color: var(--text-color);
+        }
+
+        .modal-buttons { display: flex; gap: 10px; margin-top: 15px; }
+        .btn-save { background: #007bff; color: white; flex: 1; }
+        .btn-delete { background: #dc3545; color: white; }
+        .btn-close { background: #6c757d; color: white; }
+
+        /* --- 4. モバイル調整 --- */
+        @media (max-width: 768px) {
+            .header-controls { flex-direction: column; }
+            #calendar { padding: 10px; font-size: 13px; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header-controls">
+        <input type="text" id="calendar-search" placeholder="予定を検索 (タイトル、カテゴリー)...">
+        <button id="download-csv" class="btn btn-csv">📥 CSV保存</button>
+        <button id="theme-toggle" class="btn btn-theme">🌙 モード切替</button>
+    </div>
+
+    <div id="calendar"></div>
+
+    <div id="event-modal" class="modal">
+        <div class="modal-content">
+            <h2 id="modal-title" style="margin-top:0;">予定の入力</h2>
+            <input type="hidden" id="event-id">
+            
+            <label>タイトル</label>
+            <input type="text" id="modal-event-title">
+            
+            <label>カテゴリー</label>
+            <select id="modal-event-category">
+                <option value="仕事">仕事</option>
+                <option value="プライベート">プライベート</option>
+                <option value="その他">その他</option>
+            </select>
+            
+            <label>メモ</label>
+            <textarea id="modal-event-desc" rows="4"></textarea>
+            
+            <div class="modal-buttons">
+                <button id="save-event-btn" class="btn btn-save">保存</button>
+                <button id="delete-event-btn" class="btn btn-delete">削除</button>
+                <button id="close-modal-btn" class="btn btn-close">閉じる</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /** CONFIG & STORAGE **/
+        const CONFIG = {
+            STORAGE_KEY: 'my_calendar_data',
+            CATEGORIES: {
+                '仕事': { bg: '#3788d8' },
+                'プライベート': { bg: '#ff9f89' },
+                'その他': { bg: '#6c757d' }
+            }
+        };
+
+        const Storage = {
+            save(calendar) {
+                const data = calendar.getEvents().map(e => ({
+                    id: e.id, title: e.title, start: e.startStr, end: e.endStr,
+                    allDay: e.allDay, backgroundColor: e.backgroundColor,
+                    extendedProps: e.extendedProps
+                }));
+                localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(data));
+            },
+            load() {
+                return JSON.parse(localStorage.getItem(CONFIG.STORAGE_KEY)) || [];
+            }
+        };
+
+        /** UI & NOTIFICATION **/
+        const UI = {
+            initTheme() {
+                const saved = localStorage.getItem('theme') || 'light';
+                document.documentElement.setAttribute('data-theme', saved);
+                document.getElementById('theme-toggle').addEventListener('click', () => {
+                    const now = document.documentElement.getAttribute('data-theme');
+                    const next = now === 'light' ? 'dark' : 'light';
+                    document.documentElement.setAttribute('data-theme', next);
+                    localStorage.setItem('theme', next);
+                });
+            },
+            initNotifications() {
+                if (Notification.permission !== 'granted') Notification.requestPermission();
+            }
+        };
+
+        /** MAIN APP **/
+        document.addEventListener('DOMContentLoaded', function() {
+            UI.initTheme();
+            UI.initNotifications();
+
+            const calendarEl = document.getElementById('calendar');
+            const modal = document.getElementById('event-modal');
+            let currentInfo = null;
+
+            const calendar = new FullCalendar.Calendar(calendarEl, {
+                initialView: window.innerWidth < 768 ? 'listWeek' : 'dayGridMonth',
+                locale: 'ja',
+                editable: true,
+                selectable: true,
+                events: Storage.load(),
+                headerToolbar: {
+                    left: 'prev,next today',
+                    center: 'title',
+                    right: 'dayGridMonth,timeGridWeek,listWeek'
+                },
+
+                // 新規作成
+                select: function(info) {
+                    currentInfo = info;
+                    document.getElementById('modal-title').textContent = '予定の追加';
+                    document.getElementById('event-id').value = '';
+                    document.getElementById('modal-event-title').value = '';
+                    document.getElementById('modal-event-desc').value = '';
+                    document.getElementById('delete-event-btn').style.display = 'none';
+                    modal.style.display = 'flex';
+                },
+
+                // 編集
+                eventClick: function(info) {
+                    const e = info.event;
+                    document.getElementById('modal-title').textContent = '予定の編集';
+                    document.getElementById('event-id').value = e.id;
+                    document.getElementById('modal-event-title').value = e.title;
+                    document.getElementById('modal-event-category').value = e.extendedProps.category || 'その他';
+                    document.getElementById('modal-event-desc').value = e.extendedProps.description || '';
+                    document.getElementById('delete-event-btn').style.display = 'block';
+                    modal.style.display = 'flex';
+                },
+
+                eventChange: () => Storage.save(calendar)
+            });
+
+            calendar.render();
+
+            // 保存処理
+            document.getElementById('save-event-btn').addEventListener('click', () => {
+                const id = document.getElementById('event-id').value;
+                const title = document.getElementById('modal-event-title').value;
+                const cat = document.getElementById('modal-event-category').value;
+                const desc = document.getElementById('modal-event-desc').value;
+                const color = CONFIG.CATEGORIES[cat].bg;
+
+                if (!title) return alert('タイトルを入力してください');
+
+                if (id) {
+                    const ev = calendar.getEventById(id);
+                    ev.setProp('title', title);
+                    ev.setProp('backgroundColor', color);
+                    ev.setProp('borderColor', color);
+                    ev.setExtendedProp('category', cat);
+                    ev.setExtendedProp('description', desc);
+                } else {
+                    calendar.addEvent({
+                        id: String(Date.now()),
+                        title: title,
+                        start: currentInfo.startStr,
+                        end: currentInfo.endStr,
+                        backgroundColor: color,
+                        borderColor: color,
+                        extendedProps: { category: cat, description: desc }
+                    });
+                }
+                Storage.save(calendar);
+                modal.style.display = 'none';
+            });
+
+            // 削除・閉じる
+            document.getElementById('delete-event-btn').addEventListener('click', () => {
+                const id = document.getElementById('event-id').value;
+                calendar.getEventById(id).remove();
+                Storage.save(calendar);
+                modal.style.display = 'none';
+            });
+            document.getElementById('close-modal-btn').addEventListener('click', () => modal.style.display = 'none');
+
+            // 検索
+            document.getElementById('calendar-search').addEventListener('input', (e) => {
+                const term = e.target.value.toLowerCase();
+                calendar.getEvents().forEach(ev => {
+                    const match = ev.title.toLowerCase().includes(term) || (ev.extendedProps.category || "").toLowerCase().includes(term);
+                    ev.setProp('display', match ? 'auto' : 'none');
+                });
+            });
+
+            // CSVエクスポート
+            document.getElementById('download-csv').addEventListener('click', () => {
+                let csv = "\uFEFFタイトル,開始,終了,カテゴリ,メモ\n";
+                calendar.getEvents().forEach(e => {
+                    csv += `"${e.title}","${e.startStr}","${e.endStr || e.startStr}","${e.extendedProps.category}","${e.extendedProps.description || ""}"\n`;
+                });
+                const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                const link = document.createElement("a");
+                link.href = URL.createObjectURL(blob);
+                link.download = "schedule.csv";
+                link.click();
+            });
+
+            // 通知監視 (1分ごと)
+            setInterval(() => {
+                const nowStr = new Date().toISOString().slice(0, 16); // "YYYY-MM-DDTHH:mm"
+                calendar.getEvents().forEach(e => {
+                    if (e.startStr.slice(0, 16) === nowStr) {
+                        new Notification("予定の時間です", { body: e.title });
+                    }
+                });
+            }, 60000);
+        });
+    </script>
+</body>
+</html>
