@@ -44,3 +44,4 @@ Plaintext
 
 ⚖️ ライセンス
 MIT License
+<img width="1918" height="1031" alt="スクリーンショット 2026-05-09 170344" src="https://github.com/user-attachments/assets/b105881e-acd8-4994-b67e-819a765462a7" />
